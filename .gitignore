@@ -2,5 +2,5 @@
 .Rhistory
 .RData
 .Ruserdata
-./app_test.R
-./sync.sh
+app_test.R
+sync.sh
