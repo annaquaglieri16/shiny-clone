@@ -9,7 +9,7 @@ options(shiny.maxRequestSize = 100*1024^2,bitmapType='cairo') # increase the siz
 
 header <- dashboardHeader(
   titleWidth = 300,
-  title = "Explore mutations in the cohort"
+  title = "shiny-clone"
 )
 
 sidebar <- ## Sidebar content
@@ -35,9 +35,28 @@ body <- dashboardBody(
     
     tabItem(
       tabName = "upload",
-      box(title = "Upload and explore the mutations", width = 12, solidHeader = TRUE, status = "primary",
+      box(title = "Explore the mutations in your cohort", width = 6, solidHeader = TRUE, status = "primary",
           collapsible = TRUE,
-          p("This app will allow exploration of the mutations in the cohort. Follow the steps to get started.")),
+          h4("Purpose"),
+          p("shiny-clone was developed to explore the mutations in a cohort. Even though it was developed to visualise multiple samples for a patient over time, this is not a requirement."),
+          
+          h4("Input requirement"),  
+            p("It requires a ",code('.csv')," file as input which contains specific column names: ",
+                     strong('PID')," for the patient ID; ",
+                     strong('SampleName')," to identify a sample within a patient (set this the same as PID if only one sample per time point is availavle); ",
+                     strong('Time')," defines the different times available (e.g. Time1, Time2 etc..); ",
+                     strong('SYMBOL')," is the gene identifier; ",
+                     strong('mutation_key')," uniquely identifies a mutation and can be defined as gene:chr:pos:ref_allele:alt_allele; ",
+                     strong('mutation_det') ," usually set as the consequence of the mutations on the protein but can be any detail to annotate the mutation; ",
+                     strong('VAF'), " is the variant allele frequency; ",
+                     strong('variant_type')," to specify if the variant is a SNV, a CNV, an INDEL; ",
+                     strong('Blast')," is thought for cancer samples, it is an estimate of the tumour content;",
+              strong('Outcome') ," defines the overall outcome of a patient (e.g. Responder, Refractory etc..)"),
+          
+          p(strong('Blast')," and ", strong('Outcome')," shouldn't be input requirements and I will work to update the app."),
+    
+    h4("Get started"),  
+    p("Once a ",code('.csv')," file with the columns defined above has been created, follow the steps on the rigth to get started.")),
       
       fluidRow(
         column(2, 
@@ -54,9 +73,6 @@ body <- dashboardBody(
           
           shiny::uiOutput("time_order"),
           shiny::textOutput("time_order_text")
-          #actionButton(inputId = "Run", 
-           #            label = h5("Click to confirm time order\nand plot your data!")
-          #)
         )
         ),
         
@@ -283,9 +299,24 @@ server <- function(input, output, session) {
           need(!is.null(input$file),"Upload data")
         )
         
+        # validated
+        
         inFile <- input$file
         
         inFile <- read.csv(inFile$datapath)
+        
+        # column requirements
+        need_columns <- c("PID","SampleName","SYMBOL","mutation_key","mutation_det",
+                          "VAF","variant_type","Blast","Outcome")
+        
+        missing <- need_columns[!(need_columns %in% colnames(inFile))]
+        
+        validate(
+          need(sum(colnames(inFile) %in% need_columns) == length(need_columns), 
+               paste0('Check Column names! Make sure the following are present: ',
+                      paste0(missing,collapse=","))
+          ))    
+    
         
         return(inFile)
         
@@ -298,13 +329,15 @@ server <- function(input, output, session) {
       need(readInput() != "Upload data",NULL)
     )
       
-      need_columns <- c("PID","SampleName","SYMBOL","mutation_key","mutation_det","VAF","variant_type")
+      need_columns <- c("PID","SampleName","SYMBOL","mutation_key","mutation_det",
+                        "VAF","variant_type","Blast","Outcome")
       d <- data.frame(readInput())
+      missing <- need_columns[!(need_columns %in% colnames(d))]
       
       validate(
-        need(sum(colnames(d) %in% need_columns) == 7, 
-             paste0('Check Column names! Make sure the following are present ',
-                    paste0(need_columns,collapse=","))
+        need(sum(colnames(d) %in% need_columns) == length(need_columns), 
+             paste0('Check Column names! Make sure the following are present: ',
+                    paste0(missing,collapse=","))
         ))
       
       "Input data looks good!\n\nNow go to step 2 and select order of time \n\nor import a new variant CSV file.\n\n"  
@@ -324,6 +357,9 @@ server <- function(input, output, session) {
   })
   
   
+  # Choose columns to display in the first panel
+
+  
   # Display table with all data
   output$contents <- DT::renderDataTable({
     
@@ -332,9 +368,19 @@ server <- function(input, output, session) {
       need(!is.null(input$file),NULL)
     )
     
-    d <- data.frame(readInput()) %>%
+    need_columns <- c("PID","SampleName","SYMBOL","mutation_key","mutation_det",
+                      "VAF","variant_type","Blast","Outcome")
+    d <- data.frame(readInput())
+    missing <- need_columns[!(need_columns %in% colnames(d))]
+    
+    validate(
+      need(sum(colnames(d) %in% need_columns) == length(need_columns), NULL))
+    
+    # Validated
+    
+    d <- d %>%
       dplyr::mutate(VAF = round(VAF,2)) %>%
-      dplyr::select(PID,SampleName,PID,Status,Time,Blast,Outcome) %>%
+      dplyr::select(PID,SampleName,PID,Time,Blast,Outcome) %>%
       unique()
     
     DT::datatable(d,filter = "top",rownames = FALSE,width = 20,
@@ -374,6 +420,7 @@ server <- function(input, output, session) {
       need(!is.null(input$time),NULL)
     )
     
+    
     time_order <- paste0(input$time,collapse=",")
     # d <- data.frame(readInput()) 
     
@@ -383,6 +430,23 @@ server <- function(input, output, session) {
   
   # Subset data for one patient and order time points
   selectInputPID <- reactive({
+    
+    # If a file is provided do not provide error message
+    validate(
+      need(!is.null(input$file),NULL)
+    )
+    
+    need_columns <- c("PID","SampleName","Time","SYMBOL","mutation_key","mutation_det","VAF","variant_type","Blast")
+    d <- data.frame(readInput())
+    missing <- need_columns[!(need_columns %in% colnames(d))]
+    
+    validate(
+      need(sum(colnames(d) %in% need_columns) == length(need_columns), 
+           paste0('Check Column names! Make sure the following are present: ',
+                  paste0(missing,collapse=","))
+      ))
+    
+    # Validate
     
     d <- data.frame(readInput())  %>% 
       dplyr::mutate(Time = factor(Time,levels=input$time)) %>%
@@ -530,6 +594,23 @@ server <- function(input, output, session) {
   
   
   lineplots_gene <- reactive({
+    
+    # If a file is provided do not provide error message
+    validate(
+      need(!is.null(input$file),NULL)
+    )
+    
+    need_columns <- c("PID","SampleName","SYMBOL","mutation_key","mutation_det","VAF","variant_type","Blast")
+    d <- data.frame(readInput())
+    missing <- need_columns[!(need_columns %in% colnames(d))]
+    
+    validate(
+      need(sum(colnames(d) %in% need_columns) == length(need_columns), 
+           paste0('Check Column names! Make sure the following are present: ',
+                  paste0(missing,collapse=","))
+      ))
+    
+    # Validated
     
     d <- data.frame(readInput())  %>% 
       dplyr::mutate(Time = factor(Time,levels=input$time)) %>%
